@@ -1,0 +1,162 @@
+"""One bounded local model job at a time, with restart/cancel handling."""
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import threading
+import time
+import uuid
+from .store import now, required_text, Conflict
+
+
+class Jobs:
+    def __init__(self, store, data_dir, upstream=None, python=None):
+        self.store, self.directory = store, Path(data_dir)
+        self.upstream = Path(upstream).resolve() if upstream else None
+        self.python = python
+        self.lock = threading.Lock()
+        self.active = None
+        self.process = None
+        self.cancelled = set()
+        for job in store.jobs():
+            if job["status"] in {"queued", "running"}:
+                job.update(status="interrupted", message="Server restarted. This job was not automatically resumed.")
+                store.save_job(job)
+
+    def setup(self):
+        samples = []
+        ready = bool(self.upstream and self.python and (self.upstream / "blackboard/codebase/core/blackboard_semantic_mapping.py").is_file())
+        if ready:
+            base = self.upstream / "datacorpus/vcslam"
+            samples = sorted(p.name for p in base.glob("[0-9][0-9][0-9][0-9]") if p.is_dir() and (p / f"{p.name}_samples.json").is_file())
+        return {"configured": ready, "upstream": str(self.upstream) if self.upstream else None, "samples": samples}
+
+    def start(self, payload):
+        if not self.setup()["configured"]:
+            raise ValueError("Start the server with --upstream and --upstream-python to enable model execution.")
+        kind = payload.get("kind")
+        if kind not in {"pipeline", "discussion"}:
+            raise ValueError("Unknown job kind.")
+        model = required_text(payload.get("model"), "Model identifier", 100)
+        timeout = payload.get("timeout", 600)
+        if not isinstance(timeout, int) or not 30 <= timeout <= 1800:
+            raise ValueError("Time limit must be between 30 and 1800 seconds.")
+        job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
+        cfg = {**job, "upstream": str(self.upstream)}
+        if kind == "pipeline":
+            for key, maximum in [("samples", 5), ("historical", 20)]:
+                values = payload.get(key, [])
+                allowed = set(self.setup()["samples"])
+                if not isinstance(values, list) or len(values) > maximum or any(not isinstance(x, str) or x not in allowed for x in values):
+                    raise ValueError(f"Choose at most {maximum} valid {key} IDs.")
+                cfg[key] = list(dict.fromkeys(values))
+            if not cfg["samples"]:
+                raise ValueError("Choose at least one sample.")
+            job.update(samples=cfg["samples"], historical=cfg["historical"])
+        else:
+            run = self.store.run(payload.get("run_id"))
+            item = next((x for x in run["items"] if x["id"] == payload.get("item_id")), None)
+            if item is None or not item["candidates"]:
+                raise ValueError("Select an attribute with validated candidates.")
+            rounds = payload.get("rounds", 1)
+            if not isinstance(rounds, int) or not 1 <= rounds <= 3:
+                raise ValueError("Choose one to three discussion rounds.")
+            if payload.get("version") != item["version"]:
+                raise Conflict("Refresh this attribute before requesting a discussion.")
+            cfg["rounds"] = rounds
+            cfg["context"] = {"item": item, "history": [e for e in run["events"] if e["item"] == item["id"]], "source_context": run["raw"].get("workbench_context", {"notice": "Original data and documentation were not included in this imported export. Use recorded assessments with that limitation."}), "original_discussions": run["raw"].get("discussions", {})}
+            job.update(run_id=run["id"], item_id=item["id"], version=item["version"], rounds=rounds)
+        try:
+            revision = subprocess.check_output(["git", "-C", str(self.upstream), "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+        except (OSError, subprocess.CalledProcessError):
+            revision = "unknown"
+        job["upstream_revision"] = revision
+        with self.lock:
+            if self.active:
+                raise Conflict("Another model job is running. Wait or cancel it first.")
+            self.active = job["id"]
+            self.store.save_job(job)
+            threading.Thread(target=self._execute, args=(job, cfg), daemon=True).start()
+        return job
+
+    def cancel(self, jid):
+        with self.lock:
+            if self.active != jid:
+                raise ValueError("This job is no longer active.")
+            self.cancelled.add(jid)
+            if self.process and self.process.poll() is None:
+                os.killpg(self.process.pid, signal.SIGTERM)
+
+    def _execute(self, job, cfg):
+        directory = self.directory / "jobs" / job["id"]
+        log_path = directory / "worker.log"
+        process = None
+        try:
+            directory.mkdir(parents=True)
+            cfg["output"] = str(directory / "output")
+            Path(cfg["output"]).mkdir()
+            config_path = directory / "config.json"
+            config_path.write_text(json.dumps(cfg))
+            job.update(status="running", message="Starting isolated worker")
+            self.store.save_job(job)
+            with log_path.open("w") as log:
+                process = subprocess.Popen([self.python, "-u", str(Path(__file__).with_name("worker.py")), str(config_path)], stdout=log, stderr=log, start_new_session=True)
+                with self.lock:
+                    self.process = process
+                started = time.monotonic()
+                while process.poll() is None:
+                    if job["id"] in self.cancelled or time.monotonic() - started > job["timeout"]:
+                        os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            process.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait()
+                        job["status"] = "cancelled" if job["id"] in self.cancelled else "timed_out"
+                        break
+                    time.sleep(.4)
+                    job["log"] = self._log(log_path)
+                    self.store.save_job(job)
+            job["log"] = self._log(log_path)
+            if job["status"] in {"cancelled", "timed_out"}:
+                job["message"] = "Worker stopped. Existing run and review records are unchanged."
+            elif process.returncode:
+                job.update(status="failed", message="Worker failed. Inspect its log and upstream environment.")
+            else:
+                if job["kind"] == "pipeline":
+                    for result in sorted(Path(cfg["output"]).glob("*/*/*_mapping_results.json")):
+                        raw = json.loads(result.read_text())
+                        sid = result.parent.name
+                        base = self.upstream / "datacorpus/vcslam" / sid
+                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"]}
+                        run = self.store.import_run(raw, f"SAST {sid} · {job['model']}", "upstream_pipeline")
+                        job["run_ids"].append(run["id"])
+                    if not job["run_ids"]:
+                        raise ValueError("The worker completed without producing SAST result files.")
+                else:
+                    for line in (Path(cfg["output"]) / "responses.jsonl").read_text().splitlines():
+                        self.store.agent_event(job["run_id"], job["item_id"], json.loads(line))
+                job.update(status="completed", message="Results saved. Agent proposals require a separate human decision.")
+        except Exception as exc:
+            job.update(status="failed", message=str(exc))
+        finally:
+            if process and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            with self.lock:
+                self.active = None
+                self.process = None
+                self.cancelled.discard(job["id"])
+            self.store.save_job(job)
+
+    @staticmethod
+    def _log(path):
+        content = path.read_text(errors="replace")[-8000:] if path.exists() else ""
+        content = re.sub(r"\x1b\[[0-9;]*m", "", content)
+        content = re.sub(r"sk-[A-Za-z0-9_\-]+", "[redacted key]", content)
+        for key in ("OPENAIKEY", "OPENAI_API_KEY"):
+            if os.environ.get(key):
+                content = content.replace(os.environ[key], "[redacted key]")
+        return content
