@@ -111,13 +111,14 @@ def handler(app):
 def main():
     parser = argparse.ArgumentParser(description="Run the local SAST review workbench")
     parser.add_argument("--port", type=int, default=8021)
+    parser.add_argument("--host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1", help="Bind address; use 0.0.0.0 only behind a loopback-published container port")
     parser.add_argument("--data-dir", default=".workbench")
     parser.add_argument("--upstream", help="Local Sebastian/SAST checkout (read-only integration)")
     parser.add_argument("--upstream-python", default=sys.executable, help="Python executable with the upstream dependencies")
     args = parser.parse_args()
     data_dir = Path(args.data_dir).resolve()
     app = App(data_dir, args.upstream, args.upstream_python)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(app))
+    server = ThreadingHTTPServer((args.host, args.port), handler(app))
     print(f"Blackboard Workbench: http://127.0.0.1:{server.server_port}\nSaved data: {data_dir}", flush=True)
     try:
         server.serve_forever()

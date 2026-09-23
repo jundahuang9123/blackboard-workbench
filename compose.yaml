@@ -1,0 +1,25 @@
+services:
+  workbench:
+    build:
+      context: .
+      args:
+        SAST_REPO: https://github.com/U0iS112/654321.git
+        SAST_REF: ${SAST_REF:-074ddfc409bdd120c93a0b68773bafa464e56504}
+    ports:
+      - "127.0.0.1:8031:8031"
+    environment:
+      OPENAIKEY: ${OPENAIKEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - workbench_data:/var/lib/blackboard-workbench
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  workbench_data:

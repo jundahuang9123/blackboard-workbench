@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+.workbench
+.env
+__pycache__
+*.pyc
+*.egg-info
+.DS_Store
+output
