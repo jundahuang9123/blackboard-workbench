@@ -16,19 +16,11 @@ docker compose up --build -d
 
 Open [http://127.0.0.1:8031](http://127.0.0.1:8031). Choose **Explore an example** to inspect a clearly labeled synthetic run, or **Import SAST result** to load an existing `*_mapping_results.json` file. Neither action makes model calls. The first build fetches Sebastian's pinned source and installs the packages required by this pipeline path. It may take time.
 
-To start a live SAST run, put your provider key in the local Compose environment file:
+To run the pipeline with a model, open **Model settings** in the sidebar. Choose **OpenAI**, **Anthropic · Claude**, **Google · Gemini**, **Mistral**, **Local · Ollama**, or **Local · LM Studio / compatible server**. Choose a suggested model or enter an exact model ID, enter a provider key when required, and select **Save settings**, then **Test connection · 1 request**. The test makes one short inference request and checks its JSON response; it does not prove that the full pipeline's larger prompts will succeed. Cloud requests may incur provider charges.
 
-~~~sh
-cp .env.example .env
-~~~
+Keys entered in the UI last until the server restarts by default. **Remember key on this Mac** explicitly saves the key in a local file with owner-only permissions; **the file is plaintext, not encrypted**. In Compose, this file is inside the persistent data volume. Keys are not saved in browser storage or exported review bundles. Environment-file configuration remains available. See [model connections, key storage, and local model setup](docs/MODEL_CONNECTIONS.md).
 
-Edit `.env` and set `OPENAIKEY`. `OPENAI_API_KEY` is also accepted by the worker. Restart the service after changing the key:
-
-~~~sh
-docker compose up -d
-~~~
-
-The key is read by the server process; the browser has no key field. Live runs call the configured provider and may incur charges. They have not yet been verified end to end in this container setup.
+For a local model, start its server and download/load a model before connecting the workbench. **Load available models** retrieves the exact IDs advertised by that server. Docker's default addresses use `host.docker.internal` to reach a model server on the Mac; they require a reachable, controlled Docker-to-host connection. The workbench does not install or start the model runtime.
 
 Useful commands:
 
@@ -42,9 +34,18 @@ Runs, posts, decisions, and job logs live in the Compose-managed `workbench_data
 
 ## Run Sebastian's pipeline
 
-In the sidebar, expand **Run Sebastian's pipeline**. The available four-digit sample IDs come from the pinned repository's `datacorpus/vcslam` directory. Enter one or more sample IDs, optional historical sample IDs, a model identifier, and a time limit, then select **Start model run**.
+In the sidebar, expand **Run Sebastian's pipeline**. The available four-digit sample IDs come from the pinned repository's `datacorpus/vcslam` directory. The selected connection appears above the run button. Enter one or more sample IDs, optional historical sample IDs, and a time limit, then select **Start model run**.
 
-The workbench calls Sebastian's original `run_pipeline` in a child process. It supplies the selected sample and historical IDs, the model name, and a writable output directory. Sebastian's code reads the sample JSON, documentation, reference mapping, ontology, and historical examples from its own checkout. It generates and validates mapping candidates, records signal assessments, chooses initial mappings, runs its selective council discussions, and writes `*_mapping_results.json`. The workbench imports those saved results as runs.
+For a first complete run:
+
+1. Save a model connection and pass **Test connection · 1 request** first.
+2. Expand **Run Sebastian's pipeline** and set **Sample IDs** to `0044`.
+3. Leave **Historical sample IDs** blank and set **Time limit (seconds)** to `1800`.
+4. Select **Start model run** and follow **Execution history**. After completion, choose **Open saved run**.
+
+This is a suggested initial input; a full SAST pipeline run has not yet been verified. Provider access, model context capacity, output quality, and runtime can still affect completion. The labeled synthetic example and importing existing results work without a key.
+
+The workbench calls Sebastian's original `run_pipeline` in a child process. It supplies the selected sample and historical IDs, the saved model connection, and a writable output directory. A process-local client adapter routes model requests while leaving Sebastian's source unchanged. Sebastian's code reads the sample JSON, documentation, reference mapping, ontology, and historical examples from its own checkout. It generates and validates mapping candidates, records signal assessments, chooses initial mappings, runs its selective council discussions, and writes `*_mapping_results.json`. The workbench imports those saved results as runs.
 
 The interface limits each request to five samples, 20 historical IDs, and 30–1800 seconds. One model job runs at a time. **Execution history** shows status, worker logs, and a cancel control. Cancellation stops the local worker, but cannot undo provider usage already incurred. Use **Open saved run** when a job completes.
 
@@ -70,4 +71,4 @@ docker compose up --build -d
 
 The Docker build checks out that commit. It installs the pipeline packages listed in [`requirements-upstream-runtime.txt`](requirements-upstream-runtime.txt), which match the imports used at the default pinned revision. When adopting a later commit, review its `requirements.txt` and imports and update this list if needed. New code becomes available to the workbench without copying it here, provided its `run_pipeline` call and `*_mapping_results.json` output remain compatible. Check **Execution history** for the upstream revision used by a run, then verify an example pipeline result and its candidate/council views after updating. If Sebastian changes those interfaces, update the workbench adapter and worker for the new contract.
 
-The UI stores the original output and review events separately. It does not claim to improve mapping accuracy by itself. See [architecture and data boundaries](docs/ARCHITECTURE.md).
+The UI stores the original output and review events separately. It does not claim to improve mapping accuracy by itself. A different provider/model and the adapter's output-token bounds are separate execution conditions, not evidence of equivalent accuracy. Provider routing and the UI have offline checks. A live short JSON connection test passed in the app browser with local Ollama 0.5.12 and `llama2:latest`; full SAST pipeline execution and cloud inference remain unverified. This short test does not establish that this local model can handle the ontology prompts. See [architecture and data boundaries](docs/ARCHITECTURE.md).

@@ -15,7 +15,7 @@ For each selected four-digit sample ID, Sebastian's pipeline reads a sample unde
 | `datacorpus/vcslam/ontology/ontology.ttl` | Ontology used to form and validate mapping candidates |
 | Historical sample IDs | Earlier sample data, documentation, unmapped paths, and mappings supplied as precedent |
 
-The selected model and provider credential are used by Sebastian's agents. The workbench's job controls pass those inputs to his pipeline and set an output directory in the workbench data volume. The upstream checkout is read-only at runtime; results are not written back into it.
+The model connection saved in **Model settings** is used by Sebastian's agents. The workbench's job controls snapshot the provider, model, and endpoint, pass the credential privately to an isolated worker, and set an output directory in the workbench data volume. Before loading Sebastian's modules, that worker installs a compatible model client, so his original prompts and pipeline stages use the selected connection without editing his source. The upstream checkout is read-only at runtime; results are not written back into it.
 
 The pipeline saves one `<id>_mapping_results.json` per processed sample. Its main fields are `attributes` (candidate states, selected mapping, matrix, and processing logs), `discussions` (the original council), `reasoning_effect` (mapping changes across council reasoning), and `evaluation` (before/after comparison with reference mappings).
 
@@ -34,6 +34,12 @@ The pipeline saves one `<id>_mapping_results.json` per processed sample. Its mai
 
 **Original machine selection** in the main card is the pipeline's saved final mapping, after any council changes. For the earlier selection and the effects of council reasoning, inspect the original matrix/logs and the run-level `reasoning_effect` field. An attribute without an original council entry simply had no saved council discussion involving it.
 
+## Start and follow the original workflow
+
+In **Model settings**, select a provider and model, supply a key for a cloud provider, and save the settings. Run **Test connection · 1 request** before launching a pipeline job. For a first input, use sample `0044`, no historical IDs, and a time limit of `1800` seconds under **Run Sebastian's pipeline**. Watch **Execution history** and open the saved run after completion. This input path is documented for operation; a full model-backed pipeline run is still needed to validate the complete flow with the chosen connection.
+
+The connection test only checks a short JSON response. The original pipeline uses much larger prompts: the pinned ontology alone is about 198 KB before sample data and agent instructions. A local model must have enough configured context for the complete prompts, and must follow the upstream output instructions. Provider choice and output-token limits can change results. The workbench does not claim that another provider reproduces Sebastian's original model accuracy. See [Model connections](MODEL_CONNECTIONS.md) for setup and limitations.
+
 ## How the UI adds review
 
 The workbench stores the imported machine result and derives stable IDs for each attribute and validated candidate. It shows the original result without letting a reviewer rewrite it. For a run started through the UI, it also attaches source context such as the sample JSON, documentation, model, historical IDs, and upstream revision to make the result easier to inspect. When you import a standalone `*_mapping_results.json` manually, that extra source context may be absent; the interface says so.
@@ -46,4 +52,4 @@ The three attribute tabs serve different purposes:
 
 A human can accept one recorded validated candidate, reject the mapping, or request further review. A saved decision does not rerun Sebastian's agents or overwrite their output. This separation makes it possible to compare machine reasoning and subsequent human judgment.
 
-For operation and updates, see the [README](../README.md). For data storage and the adapter contract, see [Architecture](ARCHITECTURE.md).
+For connection setup, see [Model connections](MODEL_CONNECTIONS.md). For operation and updates, see the [README](../README.md). For data storage and the adapter contract, see [Architecture](ARCHITECTURE.md).

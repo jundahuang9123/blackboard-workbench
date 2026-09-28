@@ -12,21 +12,21 @@ def main():
     args = p.parse_args()
     cfg = json.loads(Path(args.config).read_text())
     source = Path(cfg["upstream"])
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     sys.path.insert(0, str(source))
-    from dotenv import load_dotenv
-    load_dotenv(source / "env" / ".env")
-    api_key = os.environ.get("OPENAIKEY") or os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set OPENAIKEY or OPENAI_API_KEY in the server environment or upstream env/.env.")
-    os.environ["OPENAIKEY"] = api_key
+    from blackboard_workbench.llm import make_client, install_upstream_client
+    connection = {**cfg["llm"], "api_key": os.environ.get("WORKBENCH_API_KEY", "")}
+    # Upstream requires a nonempty OPENAIKEY, but its client is routed by the
+    # isolated adapter. The real selected credential stays outside config files.
+    os.environ["OPENAIKEY"] = "workbench-provider"
     if cfg["kind"] == "pipeline":
+        install_upstream_client(connection)
         from blackboard.codebase.core import blackboard_semantic_mapping as pipeline
         pipeline.gptmodel = cfg["model"]
-        # Delegate the original algorithm; this workbench does not alter its benchmark condition.
+        # Delegate the original algorithm; provider/model are recorded as a run condition.
         pipeline.run_pipeline(str(source / "datacorpus" / "vcslam"), cfg["samples"], cfg["historical"], cfg["output"], False)
     else:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, timeout=90, max_retries=0)
+        client = make_client(connection)
         context = cfg["context"]
         history = list(context.pop("history"))
         output = Path(cfg["output"]) / "responses.jsonl"
@@ -48,7 +48,7 @@ def main():
                 allowed = {c["id"] for c in context["item"]["candidates"]}
                 if candidate is not None and candidate not in allowed:
                     raise ValueError("Agent proposed a candidate outside the recorded validated set.")
-                event = {"author": role, "text": value["text"], "proposed_candidate": candidate, "round": turn, "model": cfg["model"], "version": context["item"]["version"], "job_id": cfg["id"], "prompt_version": "sast-review-v1", "usage": result.usage.model_dump() if result.usage else None}
+                event = {"author": role, "text": value["text"], "proposed_candidate": candidate, "round": turn, "model": cfg["model"], "provider": connection["provider"], "version": context["item"]["version"], "job_id": cfg["id"], "prompt_version": "sast-review-v1", "usage": result.usage.model_dump() if result.usage else None}
                 with output.open("a") as f:
                     f.write(json.dumps(event) + "\n")
                 history.append(event)

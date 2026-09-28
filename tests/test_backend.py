@@ -171,6 +171,19 @@ class HttpTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_model_settings_require_token_and_never_return_credentials(self):
+        _, config = self.request("GET", "/api/config")
+        payload = {"provider": "openai", "model": "gpt-5", "api_key": "test-http-private-key"}
+        self.assertEqual(403, self.request("POST", "/api/settings", payload)[0])
+        status, settings = self.request("POST", "/api/settings", payload, token=config["token"])
+        self.assertEqual(200, status)
+        self.assertTrue(settings["has_key"])
+        self.assertNotIn("test-http-private-key", json.dumps(settings))
+        _, public = self.request("GET", "/api/config")
+        self.assertNotIn("test-http-private-key", json.dumps(public))
+        self.assertEqual(403, self.request("POST", "/api/settings/test", {})[0])
+        self.assertEqual(403, self.request("POST", "/api/settings/models", {"provider": "local"})[0])
+
     def test_local_host_origin_and_token_are_required_for_writes(self):
         status, config = self.request("GET", "/api/config")
         self.assertEqual(200, status)

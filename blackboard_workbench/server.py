@@ -10,12 +10,14 @@ from urllib.parse import urlsplit
 from .adapter import demo
 from .store import Store, Conflict
 from .jobs import Jobs
+from .settings import ModelSettings
 
 
 class App:
     def __init__(self, data_dir, upstream=None, python=None):
         self.store = Store(Path(data_dir) / "workbench.sqlite3")
-        self.jobs = Jobs(self.store, data_dir, upstream, python)
+        self.settings = ModelSettings(data_dir)
+        self.jobs = Jobs(self.store, data_dir, upstream, python, self.settings)
         self.token = secrets.token_urlsafe(32)
 
 
@@ -67,7 +69,13 @@ def handler(app):
                     if not isinstance(body, dict):
                         raise ValueError("Expected a JSON object.")
                 if route == "/api/config" and not post:
-                    self.response(200, {"token": app.token, **app.jobs.setup()})
+                    self.response(200, {"token": app.token, **app.jobs.setup(), "llm": app.settings.public()})
+                elif route == "/api/settings":
+                    self.response(200, app.settings.save(body) if post else app.settings.public())
+                elif route == "/api/settings/test" and post:
+                    self.response(200, app.settings.test())
+                elif route == "/api/settings/models" and post:
+                    self.response(200, app.settings.models(body))
                 elif route == "/api/runs" and not post:
                     self.response(200, app.store.list_runs())
                 elif route == "/api/import" and post:
@@ -102,7 +110,7 @@ def handler(app):
             except KeyError as exc:
                 self.response(404, {"error": str(exc)})
             except (ValueError, TypeError) as exc:
-                self.response(400, {"error": str(exc)})
+                self.response(400, {"error": app.settings.redacted(str(exc))})
             except Exception:
                 self.response(500, {"error": "Unexpected server error. Your saved records remain available."})
     return Handler

@@ -8,14 +8,15 @@ import subprocess
 import threading
 import time
 import uuid
-from .store import now, required_text, Conflict
+from .store import now, Conflict
 
 
 class Jobs:
-    def __init__(self, store, data_dir, upstream=None, python=None):
+    def __init__(self, store, data_dir, upstream=None, python=None, settings=None):
         self.store, self.directory = store, Path(data_dir)
         self.upstream = Path(upstream).resolve() if upstream else None
         self.python = python
+        self.settings = settings
         self.lock = threading.Lock()
         self.active = None
         self.process = None
@@ -39,12 +40,16 @@ class Jobs:
         kind = payload.get("kind")
         if kind not in {"pipeline", "discussion"}:
             raise ValueError("Unknown job kind.")
-        model = required_text(payload.get("model"), "Model identifier", 100)
+        if self.settings is None:
+            from .settings import ModelSettings
+            self.settings = ModelSettings(self.directory)
+        connection = self.settings.resolve(model=payload.get("model"), provider=payload.get("provider"))
+        model = connection["model"]
         timeout = payload.get("timeout", 600)
         if not isinstance(timeout, int) or not 30 <= timeout <= 1800:
             raise ValueError("Time limit must be between 30 and 1800 seconds.")
-        job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
-        cfg = {**job, "upstream": str(self.upstream)}
+        job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "provider": connection["provider"], "endpoint": connection["endpoint"], "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
+        cfg = {**job, "upstream": str(self.upstream), "llm": {k: connection[k] for k in ("provider", "model", "endpoint")}}
         if kind == "pipeline":
             for key, maximum in [("samples", 5), ("historical", 20)]:
                 values = payload.get(key, [])
@@ -78,7 +83,7 @@ class Jobs:
                 raise Conflict("Another model job is running. Wait or cancel it first.")
             self.active = job["id"]
             self.store.save_job(job)
-            threading.Thread(target=self._execute, args=(job, cfg), daemon=True).start()
+            threading.Thread(target=self._execute, args=(job, cfg, connection), daemon=True).start()
         return job
 
     def cancel(self, jid):
@@ -87,12 +92,16 @@ class Jobs:
                 raise ValueError("This job is no longer active.")
             self.cancelled.add(jid)
             if self.process and self.process.poll() is None:
-                os.killpg(self.process.pid, signal.SIGTERM)
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
-    def _execute(self, job, cfg):
+    def _execute(self, job, cfg, connection=None):
         directory = self.directory / "jobs" / job["id"]
         log_path = directory / "worker.log"
         process = None
+        secret = connection.get("api_key", "") if connection else ""
         try:
             directory.mkdir(parents=True)
             cfg["output"] = str(directory / "output")
@@ -102,13 +111,20 @@ class Jobs:
             job.update(status="running", message="Starting isolated worker")
             self.store.save_job(job)
             with log_path.open("w") as log:
-                process = subprocess.Popen([self.python, "-u", str(Path(__file__).with_name("worker.py")), str(config_path)], stdout=log, stderr=log, start_new_session=True)
+                environment = os.environ.copy()
+                if connection:
+                    environment["WORKBENCH_API_KEY"] = secret
+                    environment["OPENAIKEY"] = "workbench-provider"
+                process = subprocess.Popen([self.python, "-u", str(Path(__file__).with_name("worker.py")), str(config_path)], stdout=log, stderr=log, start_new_session=True, env=environment)
                 with self.lock:
                     self.process = process
                 started = time.monotonic()
                 while process.poll() is None:
                     if job["id"] in self.cancelled or time.monotonic() - started > job["timeout"]:
-                        os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
                         try:
                             process.wait(timeout=3)
                         except subprocess.TimeoutExpired:
@@ -117,9 +133,12 @@ class Jobs:
                         job["status"] = "cancelled" if job["id"] in self.cancelled else "timed_out"
                         break
                     time.sleep(.4)
-                    job["log"] = self._log(log_path)
+                    job["log"] = self._log(log_path, (secret,))
                     self.store.save_job(job)
-            job["log"] = self._log(log_path)
+            job["log"] = self._log(log_path, (secret,))
+            with self.lock:
+                if job["id"] in self.cancelled:
+                    job["status"] = "cancelled"
             if job["status"] in {"cancelled", "timed_out"}:
                 job["message"] = "Worker stopped. Existing run and review records are unchanged."
             elif process.returncode:
@@ -130,7 +149,7 @@ class Jobs:
                         raw = json.loads(result.read_text())
                         sid = result.parent.name
                         base = self.upstream / "datacorpus/vcslam" / sid
-                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"]}
+                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint")}
                         run = self.store.import_run(raw, f"SAST {sid} · {job['model']}", "upstream_pipeline")
                         job["run_ids"].append(run["id"])
                     if not job["run_ids"]:
@@ -140,7 +159,8 @@ class Jobs:
                         self.store.agent_event(job["run_id"], job["item_id"], json.loads(line))
                 job.update(status="completed", message="Results saved. Agent proposals require a separate human decision.")
         except Exception as exc:
-            job.update(status="failed", message=str(exc))
+            message = self.settings.redacted(str(exc), (secret,)) if self.settings else str(exc)
+            job.update(status="failed", message=message)
         finally:
             if process and process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -151,12 +171,13 @@ class Jobs:
                 self.cancelled.discard(job["id"])
             self.store.save_job(job)
 
-    @staticmethod
-    def _log(path):
-        content = path.read_text(errors="replace")[-8000:] if path.exists() else ""
+    def _log(self, path, extra_keys=()):
+        content = path.read_text(errors="replace") if path.exists() else ""
         content = re.sub(r"\x1b\[[0-9;]*m", "", content)
         content = re.sub(r"sk-[A-Za-z0-9_\-]+", "[redacted key]", content)
         for key in ("OPENAIKEY", "OPENAI_API_KEY"):
             if os.environ.get(key):
                 content = content.replace(os.environ[key], "[redacted key]")
-        return content
+        if self.settings:
+            content = self.settings.redacted(content, extra_keys)
+        return content[-8000:]

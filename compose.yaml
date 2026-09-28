@@ -10,6 +10,11 @@ services:
     environment:
       OPENAIKEY: ${OPENAIKEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - workbench_data:/var/lib/blackboard-workbench
     init: true
