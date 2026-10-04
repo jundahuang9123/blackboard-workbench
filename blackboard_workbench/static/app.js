@@ -2,7 +2,7 @@
 const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pretty = x => esc(JSON.stringify(x, null, 2));
-const state = {config:null, runs:[], run:null, item:null, tab:'assessments', jobs:[], pending:false};
+const state = {config:null, runs:[], run:null, item:null, tab:'assessments', jobs:[], datasets:[], dataset:null, pending:false};
 let noticeTimer;
 function notice(message, error=false) { clearTimeout(noticeTimer); $('#notice').textContent=message; $('#notice').className=error?'error':''; if(!error) noticeTimer=setTimeout(()=>$('#notice').textContent='',8000); }
 async function api(path, body) {
@@ -79,6 +79,7 @@ function updateExecution() {
   $('#pipeline-cost').textContent=provider?.kind==='local'?'Runs use your local model server.':'Cloud runs make model requests that may incur provider charges.';
   $('#setup-status').textContent=executionIssue() || `Available sample IDs: ${(state.config.samples||[]).join(', ')}.`;
   $('#run-form').querySelectorAll('input,button').forEach(x=>x.disabled=!state.config.configured || !current.ready);
+  updateCustomExecution();
   $('#test-settings').disabled=!current.ready;
   $('#test-help').textContent=`The test uses the saved connection (${modelDescription()}) and makes one short model request. ${provider?.kind==='local'?'Your local model server handles it.':'A cloud provider may charge for it.'}`;
   if($('#agent-model')) $('#agent-model').textContent=`Saved connection: ${modelDescription()}`;
@@ -136,6 +137,7 @@ function renderRun() {
   $('#run-origin').textContent=state.run.origin.replaceAll('_',' ');
   $('#run-meta').textContent=`Saved ${date(state.run.created)} · Source hash ${state.run.sha.slice(0,12)}`;
   $('#demo-banner').hidden=!(state.run.raw.workbench_demo || state.run.origin==='synthetic_demo');
+  renderBenchmark();
   $('#export').href=`/api/runs/${state.run.id}/export`;
   const reviewed=state.run.items.filter(i=>i.status!=='unreviewed').length;
   const failed=state.run.items.filter(i=>!i.candidates.length).length;
@@ -163,7 +165,7 @@ function signalValues(candidate,item) {
 function renderItem() {
   const item=selectedItem(); if(!item)return;
   $('#item-heading').innerHTML=`<span class="eyebrow">Attribute workspace</span><h2>${esc(item.name)}</h2>${badge(item.status)}<span class="badge">Review version ${item.version}</span>`;
-  $('#assessments').innerHTML=`<h3>Original machine selection</h3><pre>${esc(item.machine_mapping?.candidate || 'No final mapping recorded.')}</pre><p class="hint">${esc(item.machine_mapping?.selection_reason || 'No selection rationale recorded.')}</p><h3>Validated candidates</h3><p class="hint">These assessments come from the imported run. “Validated” is not human approval or proof of semantic correctness.</p>`+item.candidates.map((c,n)=>`<article class="candidate"><span class="eyebrow">Candidate ${n+1} · ${c.id.slice(0,6)}</span><h3>${esc(c.label)}</h3><div class="signals">${signalValues(c,item).map(([k,v])=>`<div class="signal"><b>${esc(k)}</b>${typeof v==='object'&&v!==null ? `<span class="badge">${esc(v.accepted===undefined?(v.proximity||v.label||'Recorded'):v.accepted?'Supports':'Does not support')}</span><p>${typeof v.reason==='object'?pretty(v.reason):esc(v.reason||JSON.stringify(v))}</p>`:esc(v)}</div>`).join('')||'<p class="hint">No named signal votes recorded.</p>'}</div><details><summary>Complete candidate record</summary><pre>${pretty(c.record)}</pre></details></article>`).join('')+(item.candidates.length?'':'<div class="callout">No validated candidates. You can record a rejection or request further review; acceptance is unavailable.</div>')+`<details><summary>Original matrix and processing logs</summary><pre>${pretty(item.original)}</pre></details><details><summary>Run-level evaluation and changes</summary><pre>${pretty({evaluation:state.run.raw.evaluation,reasoning_effect:state.run.raw.reasoning_effect})}</pre></details><details><summary>Available source context</summary><pre>${pretty(state.run.raw.workbench_context||{notice:'This export did not include original source data. Recorded assessments are not a substitute for the original documentation.'})}</pre></details>`;
+  $('#assessments').innerHTML=`<h3>Original machine selection</h3><pre>${esc(item.machine_mapping?.candidate || 'No final mapping recorded.')}</pre><p class="hint">${esc(item.machine_mapping?.selection_reason || 'No selection rationale recorded.')}</p><h3>Validated candidates</h3><p class="hint">These assessments come from the imported run. “Validated” is not human approval or proof of semantic correctness.</p>`+item.candidates.map((c,n)=>`<article class="candidate"><span class="eyebrow">Candidate ${n+1} · ${c.id.slice(0,6)}</span><h3>${esc(c.label)}</h3><div class="signals">${signalValues(c,item).map(([k,v])=>`<div class="signal"><b>${esc(k)}</b>${typeof v==='object'&&v!==null ? `<span class="badge">${esc(v.accepted===undefined?(v.proximity||v.label||'Recorded'):v.accepted?'Supports':'Does not support')}</span><p>${typeof v.reason==='object'?pretty(v.reason):esc(v.reason||JSON.stringify(v))}</p>`:esc(v)}</div>`).join('')||'<p class="hint">No named signal votes recorded.</p>'}</div><details><summary>Complete candidate record</summary><pre>${pretty(c.record)}</pre></details></article>`).join('')+(item.candidates.length?'':'<div class="callout">No validated candidates. You can record a rejection or request further review; acceptance is unavailable.</div>')+`<details><summary>Original matrix and processing logs</summary><pre>${pretty(item.original)}</pre></details><details><summary>Run-level evaluation and changes</summary><pre>${pretty({benchmark:state.run.raw.benchmark,evaluation:state.run.raw.evaluation,reasoning_effect:state.run.raw.reasoning_effect})}</pre></details><details><summary>Available source context</summary><pre>${pretty(state.run.raw.workbench_context||{notice:'This export did not include original source data. Recorded assessments are not a substitute for the original documentation.'})}</pre></details>`;
   renderDiscussion(item); renderHistory(item);
   $('#decision-candidate').innerHTML='<option value="">Choose a validated candidate</option>'+item.candidates.map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join('');
   const selected=item.selected||item.candidates.find(c=>c.label===item.machine_mapping?.candidate)?.id||'';
@@ -200,14 +202,92 @@ async function loadJobs() {
   const completed=jobs.filter(j=>j.status==='completed'&&state.jobs.some(old=>old.id===j.id&&old.status!=='completed'));
   state.jobs=jobs;
   $('#jobs-section').hidden=!jobs.length;
-  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.thinking==='off'?' · thinking off':''}${j.rounds?' · '+j.rounds+' rounds':''}</p><p>${esc(j.message)}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
+  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':j.kind==='custom_pipeline'?'Custom data pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.thinking==='off'?' · thinking off':''}${j.rounds?' · '+j.rounds+' rounds':''}</p><p>${esc(j.message)}${j.dataset_title?' · '+esc(j.dataset_title):''}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
   $('#jobs').querySelectorAll('details[open] pre').forEach(p=>{p.scrollTop=logScroll.get(p.closest('details').dataset.jobLog)||0;});
   document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>action(async()=>{await api(`/api/jobs/${b.dataset.cancel}/cancel`,{});notice('Cancellation requested.');await loadJobs();}));
   document.querySelectorAll('[data-job-run]').forEach(b=>b.onclick=()=>action(async()=>{await loadRuns();await openRun(b.dataset.jobRun);$('#workspace').scrollIntoView({behavior:'smooth'});}));
   if(completed.length){await loadRuns();notice('Model job completed. Open or refresh its run to inspect the saved result.');}
 }
+
+function showCustom(open) {
+  $('#custom-input').hidden=!open;
+  $('#open-custom').setAttribute('aria-expanded',String(open));
+  if(open) {$('#custom-input').scrollIntoView({behavior:'smooth',block:'start'});$('#custom-table').focus({preventScroll:true});}
+}
+function updateCustomExecution() {
+  const local=providerById(llm().provider)?.kind==='local';
+  const maximum=local?7200:1800;
+  $('#custom-timeout').max=maximum;
+  if(Number($('#custom-timeout').value)>maximum) $('#custom-timeout').value=maximum;
+  $('#custom-model').textContent=`Saved connection: ${modelDescription()}`;
+  $('#custom-cost').textContent=local?'This run uses your local model server.':'This run uses the selected cloud provider and may incur API charges.';
+  $('#custom-start').disabled=!state.dataset || !state.config?.configured || !llm().ready;
+  const d=state.datasets.find(x=>x.id===state.dataset);
+  $('#custom-status').textContent=executionIssue() || (d?`${d.columns.length} columns · ${d.sample_rows} example rows of ${d.row_count} · ${d.benchmark_available?'Benchmark on '+d.reference_columns.length+' reference columns':'No benchmark: no reference mappings'}`:'Validate and save inputs, then choose a dataset.');
+}
+async function loadDatasets() {
+  state.datasets=await api('/api/datasets');
+  $('#custom-dataset').innerHTML='<option value="">Choose validated inputs</option>'+state.datasets.map(d=>`<option value="${esc(d.id)}">${esc(d.title)} · ${d.columns.length} columns</option>`).join('');
+  $('#custom-dataset').value=state.dataset||'';
+  updateCustomExecution();
+}
+async function uploadFile(file) {
+  if(!file) return null;
+  if(file.size>5_000_000) throw new Error(`${file.name}: choose a file of at most 5 MB.`);
+  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected file.'));reader.onload=()=>resolve({name:file.name,content:String(reader.result).split(',')[1]});reader.readAsDataURL(file);});
+}
+async function previewCustomTable() {
+  const table=await uploadFile($('#custom-table').files[0]);
+  if(!table) {$('#custom-preview').innerHTML='';return;}
+  const result=await api('/api/datasets/inspect',{table,sheet:$('#custom-sheet').value||null,sample_rows:Number($('#custom-form').elements.sample_rows.value)});
+  $('#custom-sheet-label').hidden=!result.sheets.length;
+  $('#custom-sheet').innerHTML=result.sheets.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+  $('#custom-sheet').value=result.sheet||'';
+  $('#custom-preview').innerHTML=`<p class="hint">${result.row_count} data rows · ${result.columns.length} columns · ${result.sample_rows} example rows will be saved. Preview shows up to five rows.</p><div class="table-scroll"><table><thead><tr>${result.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${result.data.map(r=>`<tr>${result.columns.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function invalidateCustom() {state.dataset=null;$('#custom-dataset').value='';$('#custom-validation').textContent='Inputs changed. Validate and save them before starting a run.';updateCustomExecution();}
+$('#open-custom').onclick=()=>showCustom($('#custom-input').hidden);
+$('#close-custom').onclick=()=>{showCustom(false);$('#open-custom').focus();};
+$('#custom-form').addEventListener('input',invalidateCustom);
+$('#custom-table').onchange=()=>action(async()=>{invalidateCustom();$('#custom-sheet').innerHTML='';$('#custom-preview').innerHTML='';await previewCustomTable();});
+$('#custom-sheet').onchange=()=>action(previewCustomTable);
+$('#custom-form').elements.sample_rows.onchange=()=>action(previewCustomTable);
+$('#custom-reference').onchange=()=>{$('#custom-clear-reference').hidden=!$('#custom-reference').files.length;};
+$('#custom-clear-reference').onclick=()=>{$('#custom-reference').value='';$('#custom-clear-reference').hidden=true;invalidateCustom();};
+$('#custom-dataset').onchange=()=>{state.dataset=$('#custom-dataset').value||null;updateCustomExecution();};
+$('#custom-form').onsubmit=e=>{e.preventDefault();action(async()=>{
+  const form=e.target;
+  $('#custom-validation').textContent='Validating your table, ontology and optional reference mappings…';
+  try {
+    const table=await uploadFile($('#custom-table').files[0]);
+    const files=[...$('#custom-ontologies').files];
+    if(files.length<1||files.length>5) throw new Error('Choose one to five Turtle ontologies.');
+    const ontologies=await Promise.all(files.map(uploadFile));
+    const reference=await uploadFile($('#custom-reference').files[0]);
+    const d=await api('/api/datasets',{title:form.elements.title.value,table,sheet:$('#custom-sheet').value||null,sample_rows:Number(form.elements.sample_rows.value),ontologies,reference,documentation:form.elements.documentation.value});
+    state.dataset=d.id;await loadDatasets();
+    $('#custom-validation').textContent=`Inputs saved: ${d.columns.length} columns and ${d.sample_rows} example rows. ${d.benchmark_available?'Benchmark enabled for '+d.reference_columns.length+' reference columns.':'No reference mappings: no benchmark will be calculated.'}`;
+    notice('Inputs validated and saved. No model requests made.');
+  } catch(error) {$('#custom-validation').textContent=error.message;throw error;}
+});};
+$('#custom-start').onclick=()=>action(async()=>{
+  const timeout=Number($('#custom-timeout').value);
+  if(!Number.isInteger(timeout)||timeout<30||timeout>Number($('#custom-timeout').max))throw new Error('Choose a time limit within the displayed range.');
+  await api('/api/jobs',{kind:'custom_pipeline',dataset_id:state.dataset,timeout});await loadJobs();
+  notice('Custom data run started. Follow execution history.');$('#jobs-section').scrollIntoView({behavior:'smooth'});
+});
+function renderBenchmark() {
+  const raw=state.run.raw,banner=$('#benchmark-banner'),benchmark=raw.benchmark;
+  banner.hidden=state.run.origin==='synthetic_demo'||(!benchmark&&!raw.evaluation);
+  if(benchmark?.available===false) {banner.textContent='No benchmark — no reference mappings were supplied. Review the mappings using the recorded evidence.';return;}
+  const evaluated=raw.evaluation?.after_reasoning;
+  if(!evaluated) {banner.textContent='No reference benchmark recorded.';return;}
+  const total=(evaluated['hits@1']||0)+(evaluated['not_hits@1']||0)+(evaluated.no_mappings_provided||0);
+  banner.textContent=`Reference benchmark after council: ${evaluated['hits@1']||0}/${total} exact matches${total?' · '+((evaluated['hits@1']||0)/total*100).toFixed(1)+'%':''}. ${benchmark?'Covers the '+total+' columns with supplied references; '+state.run.items.length+' columns were mapped.':'Matches require the reference class and property.'}`;
+}
+
 async function init() {
-  try {state.config=await api('/api/config');renderSettings();if(!llm().ready)showSettings(true);await loadRuns();await loadJobs();}
+  try {state.config=await api('/api/config');renderSettings();if(!llm().ready)showSettings(true);await loadDatasets();await loadRuns();await loadJobs();}
   catch(e){notice(e.message,true);}
 }
 init();

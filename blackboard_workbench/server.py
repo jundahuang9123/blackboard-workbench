@@ -11,12 +11,14 @@ from .adapter import demo
 from .store import Store, Conflict
 from .jobs import Jobs
 from .settings import ModelSettings
+from .datasets import Datasets
 
 
 class App:
     def __init__(self, data_dir, upstream=None, python=None):
         self.store = Store(Path(data_dir) / "workbench.sqlite3")
         self.settings = ModelSettings(data_dir)
+        self.datasets = Datasets(data_dir)
         self.jobs = Jobs(self.store, data_dir, upstream, python, self.settings)
         self.token = secrets.token_urlsafe(32)
 
@@ -76,6 +78,10 @@ def handler(app):
                     self.response(200, app.settings.test())
                 elif route == "/api/settings/models" and post:
                     self.response(200, app.settings.models(body))
+                elif route == "/api/datasets/inspect" and post:
+                    self.response(200, app.datasets.inspect(body))
+                elif route == "/api/datasets":
+                    self.response(201, app.datasets.create(body)) if post else self.response(200, app.datasets.list())
                 elif route == "/api/runs" and not post:
                     self.response(200, app.store.list_runs())
                 elif route == "/api/import" and post:

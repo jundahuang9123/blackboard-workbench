@@ -145,6 +145,40 @@ class JobCredentialTests(unittest.TestCase):
         self.assertNotIn(secret, self.jobs._log(log, (private_arg["api_key"],)))
 
 
+    def test_custom_job_imports_output_and_preserves_disabled_benchmark(self):
+        from test_datasets import payload
+        from blackboard_workbench.datasets import Datasets
+        from blackboard_workbench.adapter import demo
+        dataset = Datasets(self.root / "data").create(payload())
+        self.settings.save({"provider": "ollama", "model": "local-model"})
+        with patch("blackboard_workbench.jobs.threading.Thread") as thread:
+            job = self.jobs.start({"kind": "custom_pipeline", "dataset_id": dataset["id"], "timeout": 7200})
+        args = thread.call_args.kwargs["args"]
+        self.assertEqual(dataset["id"], job["dataset_id"])
+        self.assertFalse(job["benchmark_available"])
+        self.assertNotIn("reference", args[1])
+        raw = demo()
+        raw.pop("workbench_demo")
+        raw["evaluation"] = None
+        raw["benchmark"] = {"available": False}
+        raw["workbench_context"] = {"dataset": dataset, "data": [{"employee.name": "Ada", "salary": 42000.5}]}
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        def write_fixture(command, **kwargs):
+            config = json.loads(Path(command[-1]).read_text())
+            result = Path(config["output"]) / "timestamp" / "0000" / "0000_mapping_results.json"
+            result.parent.mkdir(parents=True)
+            result.write_text(json.dumps(raw))
+            return process
+        with patch("blackboard_workbench.jobs.subprocess.Popen", side_effect=write_fixture):
+            self.jobs._execute(*args)
+        saved = self.store.jobs()[0]
+        self.assertEqual("completed", saved["status"])
+        run = self.store.run(saved["run_ids"][0])
+        self.assertEqual("custom_pipeline", run["origin"])
+        self.assertIsNone(run["raw"]["evaluation"])
+        self.assertEqual(dataset, run["raw"]["workbench_context"]["dataset"])
+
     def test_long_local_job_limit_and_cloud_limit_remain_bounded(self):
         self.settings.save({"provider": "ollama", "model": "local-model"})
         with patch("blackboard_workbench.jobs.threading.Thread"):

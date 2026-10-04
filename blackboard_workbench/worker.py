@@ -19,12 +19,16 @@ def main():
     # Upstream requires a nonempty OPENAIKEY, but its client is routed by the
     # isolated adapter. The real selected credential stays outside config files.
     os.environ["OPENAIKEY"] = "workbench-provider"
-    if cfg["kind"] == "pipeline":
+    if cfg["kind"] in {"pipeline", "custom_pipeline"}:
         install_upstream_client(connection)
         from blackboard.codebase.core import blackboard_semantic_mapping as pipeline
         pipeline.gptmodel = cfg["model"]
         # Delegate the original algorithm; provider/model are recorded as a run condition.
-        pipeline.run_pipeline(str(source / "datacorpus" / "vcslam"), cfg["samples"], cfg["historical"], cfg["output"], False)
+        if cfg["kind"] == "custom_pipeline":
+            from blackboard_workbench.custom_pipeline import run_custom_pipeline
+            run_custom_pipeline(pipeline, cfg)
+        else:
+            pipeline.run_pipeline(str(source / "datacorpus" / "vcslam"), cfg["samples"], cfg["historical"], cfg["output"], False)
     else:
         client = make_client(connection)
         context = cfg["context"]

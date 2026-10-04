@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from .store import now, Conflict
+from .datasets import Datasets
 
 
 class Jobs:
@@ -38,7 +39,7 @@ class Jobs:
         if not self.setup()["configured"]:
             raise ValueError("Start the server with --upstream and --upstream-python to enable model execution.")
         kind = payload.get("kind")
-        if kind not in {"pipeline", "discussion"}:
+        if kind not in {"pipeline", "custom_pipeline", "discussion"}:
             raise ValueError("Unknown job kind.")
         if self.settings is None:
             from .settings import ModelSettings
@@ -62,6 +63,10 @@ class Jobs:
             if not cfg["samples"]:
                 raise ValueError("Choose at least one sample.")
             job.update(samples=cfg["samples"], historical=cfg["historical"])
+        elif kind == "custom_pipeline":
+            folder, metadata = Datasets(self.directory).get(payload.get("dataset_id"))
+            cfg["dataset_path"] = str(folder)
+            job.update(dataset_id=metadata["id"], dataset_title=metadata["title"], benchmark_available=metadata["benchmark_available"])
         else:
             run = self.store.run(payload.get("run_id"))
             item = next((x for x in run["items"] if x["id"] == payload.get("item_id")), None)
@@ -80,6 +85,7 @@ class Jobs:
         except (OSError, subprocess.CalledProcessError):
             revision = "unknown"
         job["upstream_revision"] = revision
+        cfg["upstream_revision"] = revision
         with self.lock:
             if self.active:
                 raise Conflict("Another model job is running. Wait or cancel it first.")
@@ -148,13 +154,18 @@ class Jobs:
             elif process.returncode:
                 job.update(status="failed", message="Worker failed. Inspect its log and upstream environment.")
             else:
-                if job["kind"] == "pipeline":
+                if job["kind"] in {"pipeline", "custom_pipeline"}:
                     for result in sorted(Path(cfg["output"]).glob("*/*/*_mapping_results.json")):
                         raw = json.loads(result.read_text())
-                        sid = result.parent.name
-                        base = self.upstream / "datacorpus/vcslam" / sid
-                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint"), "thinking": job.get("thinking", "default"), "json_output": job.get("json_output", "prompt")}
-                        run = self.store.import_run(raw, f"SAST {sid} · {job['model']}", "upstream_pipeline")
+                        if job["kind"] == "custom_pipeline":
+                            title = f"{job['dataset_title']} · {job['model']}"
+                            origin = "custom_pipeline"
+                        else:
+                            sid = result.parent.name
+                            base = self.upstream / "datacorpus/vcslam" / sid
+                            raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint"), "thinking": job.get("thinking", "default"), "json_output": job.get("json_output", "prompt")}
+                            title, origin = f"SAST {sid} · {job['model']}", "upstream_pipeline"
+                        run = self.store.import_run(raw, title, origin)
                         job["run_ids"].append(run["id"])
                     if not job["run_ids"]:
                         raise ValueError("The worker completed without producing SAST result files.")

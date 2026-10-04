@@ -171,6 +171,23 @@ class HttpTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_custom_upload_requires_token_and_saves_benchmark_choice(self):
+        from test_datasets import payload
+        _, config = self.request("GET", "/api/config")
+        body = payload()
+        self.assertEqual(403, self.request("POST", "/api/datasets", body)[0])
+        status, inspected = self.request("POST", "/api/datasets/inspect", body, token=config["token"])
+        self.assertEqual(200, status)
+        self.assertEqual(["employee.name", "salary"], inspected["columns"])
+        status, saved = self.request("POST", "/api/datasets", body, token=config["token"])
+        self.assertEqual(201, status)
+        self.assertFalse(saved["benchmark_available"])
+        self.assertEqual([saved], self.request("GET", "/api/datasets")[1])
+        self.assertNotIn("data", saved)
+        status, error = self.request("POST", "/api/datasets", payload({}), token=config["token"])
+        self.assertEqual(400, status)
+        self.assertEqual(1, len(self.request("GET", "/api/datasets")[1]))
+
     def test_model_settings_require_token_and_never_return_credentials(self):
         _, config = self.request("GET", "/api/config")
         payload = {"provider": "openai", "model": "gpt-5", "api_key": "test-http-private-key"}

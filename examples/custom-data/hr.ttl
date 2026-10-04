@@ -1,0 +1,7 @@
+@prefix ex: <https://example.org/hr#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Employee a owl:Class; rdfs:label "Employee" .
+ex:name a owl:DatatypeProperty; rdfs:range xsd:string; rdfs:comment "The employee name." .
+ex:salary a owl:DatatypeProperty; rdfs:range xsd:decimal; rdfs:comment "The employee annual salary." .

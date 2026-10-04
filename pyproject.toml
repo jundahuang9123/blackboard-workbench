@@ -7,7 +7,7 @@ name = "blackboard-workbench"
 version = "0.1.0"
 description = "A local, persistent review workbench for SAST-Blackboard"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["rdflib>=7.5,<8", "openpyxl>=3.1.5,<4"]
 
 [project.scripts]
 blackboard-workbench = "blackboard_workbench.server:main"

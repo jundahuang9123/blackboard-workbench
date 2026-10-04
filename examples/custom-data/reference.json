@@ -1,0 +1,4 @@
+{
+  "employeeName": {"class": "ex:Employee", "property": "ex:name"},
+  "salary": {"class": "ex:Employee", "property": "ex:salary"}
+}

@@ -32,6 +32,12 @@ docker compose down
 
 Runs, posts, decisions, and job logs live in the Compose-managed `workbench_data` volume. `docker compose down` keeps that volume; `docker compose down -v` deletes it.
 
+## Run your own data
+
+Choose **Run your own data** in the sidebar to upload a CSV or XLSX table, select a worksheet, and add one or more Turtle ontologies. Preview the columns and example rows, optionally add descriptions and reference mappings, then choose **Validate and save inputs**. Select the saved dataset and **Start model run** using your configured model connection.
+
+Reference mappings are optional. **Without a reference file, the run has no benchmark score**; mappings remain available for inspection, discussion and human review. With references, the UI reports exact class–property matches over the supplied reference columns. Reference answers are kept separate from model prompts. See [input formats, limits and examples](docs/CUSTOM_DATA.md).
+
 ## Run Sebastian's pipeline
 
 In the sidebar, expand **Run Sebastian's pipeline**. The available four-digit sample IDs come from the pinned repository's `datacorpus/vcslam` directory. The selected connection appears above the run button. Enter one or more sample IDs, optional historical sample IDs, and a time limit, then select **Start model run**.
