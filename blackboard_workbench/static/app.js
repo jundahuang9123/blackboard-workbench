@@ -47,6 +47,8 @@ function renderProviderProfile() {
   $('#endpoint-help').hidden=provider.kind!=='local';
   $('#load-models').hidden=provider.kind!=='local';
   $('#provider-help').textContent=provider.help || 'Choose a suggested model or enter a model identifier supported by your provider.';
+  $('#thinking-label').hidden=provider.id!=='ollama';
+  $('#llm-thinking').value=profile.thinking || 'default';
   $('#llm-key').value='';
   $('#key-label').firstChild.textContent=provider.requires_key?'API key':'API key (optional)';
   $('#key-status').textContent=keyDescription(profile,provider);
@@ -63,7 +65,7 @@ function renderSettings() {
   renderProviderProfile();
   updateExecution();
 }
-function modelDescription() { return `${providerLabel(llm().provider)} · ${llm().model||'Choose a model'}`; }
+function modelDescription() { return `${providerLabel(llm().provider)} · ${llm().model||'Choose a model'}${llm().thinking==='off'?' · thinking off':''}`; }
 function executionIssue() {
   if(!state.config?.configured) return 'Saved runs and human reviews are ready. The upstream pipeline connection is not configured.';
   if(!llm().ready) return 'Open Model settings, choose a model connection and save it before starting a run.';
@@ -73,6 +75,7 @@ function updateExecution() {
   const current=llm(), provider=providerById(current.provider);
   $('#model-summary').textContent=current.ready?`${modelDescription()} · Configured`:'Model connection needs setup';
   $('#pipeline-model').textContent=`Saved connection: ${modelDescription()}`;
+  $('#run-form input[name=timeout]').max=provider?.kind==='local'?'7200':'1800';
   $('#pipeline-cost').textContent=provider?.kind==='local'?'Runs use your local model server.':'Cloud runs make model requests that may incur provider charges.';
   $('#setup-status').textContent=executionIssue() || `Available sample IDs: ${(state.config.samples||[]).join(', ')}.`;
   $('#run-form').querySelectorAll('input,button').forEach(x=>x.disabled=!state.config.configured || !current.ready);
@@ -85,7 +88,7 @@ function updateExecution() {
 function settingsBody(clearKey=false) {
   const form=$('#settings-form');
   const provider=selectedProvider(), profile=profileFor(provider.id);
-  return {provider:provider.id,model:clearKey?(profile.model||form.elements.model.value.trim()):form.elements.model.value.trim(),endpoint:clearKey?(profile.endpoint||provider.default_endpoint||''):form.elements.endpoint.value.trim(),api_key:clearKey?'':form.elements.api_key.value,remember_key:clearKey?false:form.elements.remember_key.checked,clear_key:clearKey};
+  return {provider:provider.id,model:clearKey?(profile.model||form.elements.model.value.trim()):form.elements.model.value.trim(),endpoint:clearKey?(profile.endpoint||provider.default_endpoint||''):form.elements.endpoint.value.trim(),thinking:provider.id==='ollama'?(clearKey?(profile.thinking||'default'):form.elements.thinking.value):'default',api_key:clearKey?'':form.elements.api_key.value,remember_key:clearKey?false:form.elements.remember_key.checked,clear_key:clearKey};
 }
 async function saveSettings(clearKey=false) {
   const current=await api('/api/settings',settingsBody(clearKey));
@@ -197,7 +200,7 @@ async function loadJobs() {
   const completed=jobs.filter(j=>j.status==='completed'&&state.jobs.some(old=>old.id===j.id&&old.status!=='completed'));
   state.jobs=jobs;
   $('#jobs-section').hidden=!jobs.length;
-  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.rounds?' · '+j.rounds+' rounds':''}</p><p>${esc(j.message)}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
+  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.thinking==='off'?' · thinking off':''}${j.rounds?' · '+j.rounds+' rounds':''}</p><p>${esc(j.message)}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
   $('#jobs').querySelectorAll('details[open] pre').forEach(p=>{p.scrollTop=logScroll.get(p.closest('details').dataset.jobLog)||0;});
   document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>action(async()=>{await api(`/api/jobs/${b.dataset.cancel}/cancel`,{});notice('Cancellation requested.');await loadJobs();}));
   document.querySelectorAll('[data-job-run]').forEach(b=>b.onclick=()=>action(async()=>{await loadRuns();await openRun(b.dataset.jobRun);$('#workspace').scrollIntoView({behavior:'smooth'});}));

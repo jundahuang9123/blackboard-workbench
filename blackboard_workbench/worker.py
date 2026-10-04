@@ -48,7 +48,7 @@ def main():
                 allowed = {c["id"] for c in context["item"]["candidates"]}
                 if candidate is not None and candidate not in allowed:
                     raise ValueError("Agent proposed a candidate outside the recorded validated set.")
-                event = {"author": role, "text": value["text"], "proposed_candidate": candidate, "round": turn, "model": cfg["model"], "provider": connection["provider"], "version": context["item"]["version"], "job_id": cfg["id"], "prompt_version": "sast-review-v1", "usage": result.usage.model_dump() if result.usage else None}
+                event = {"author": role, "text": value["text"], "proposed_candidate": candidate, "round": turn, "model": cfg["model"], "provider": connection["provider"], "thinking": connection.get("thinking", "default"), "json_output": cfg.get("json_output", "prompt"), "version": context["item"]["version"], "job_id": cfg["id"], "prompt_version": "sast-review-v1", "usage": result.usage.model_dump() if result.usage else None}
                 with output.open("a") as f:
                     f.write(json.dumps(event) + "\n")
                 history.append(event)

@@ -46,10 +46,12 @@ class Jobs:
         connection = self.settings.resolve(model=payload.get("model"), provider=payload.get("provider"))
         model = connection["model"]
         timeout = payload.get("timeout", 600)
-        if not isinstance(timeout, int) or not 30 <= timeout <= 1800:
-            raise ValueError("Time limit must be between 30 and 1800 seconds.")
-        job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "provider": connection["provider"], "endpoint": connection["endpoint"], "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
-        cfg = {**job, "upstream": str(self.upstream), "llm": {k: connection[k] for k in ("provider", "model", "endpoint")}}
+        max_timeout = 7200 if connection["provider"] in {"ollama", "local"} else 1800
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or not 30 <= timeout <= max_timeout:
+            raise ValueError(f"Time limit must be between 30 and {max_timeout} seconds.")
+        job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "provider": connection["provider"], "endpoint": connection["endpoint"], "thinking": connection.get("thinking", "default"), "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
+        job["json_output"] = "object-or-array-v1" if connection["provider"] == "ollama" else "prompt"
+        cfg = {**job, "upstream": str(self.upstream), "llm": {k: connection[k] for k in ("provider", "model", "endpoint", "thinking")}}
         if kind == "pipeline":
             for key, maximum in [("samples", 5), ("historical", 20)]:
                 values = payload.get(key, [])
@@ -116,6 +118,8 @@ class Jobs:
                     environment["WORKBENCH_API_KEY"] = secret
                     environment["OPENAIKEY"] = "workbench-provider"
                 process = subprocess.Popen([self.python, "-u", str(Path(__file__).with_name("worker.py")), str(config_path)], stdout=log, stderr=log, start_new_session=True, env=environment)
+                job["message"] = "Worker running. Follow the stage log below."
+                self.store.save_job(job)
                 with self.lock:
                     self.process = process
                 started = time.monotonic()
@@ -149,7 +153,7 @@ class Jobs:
                         raw = json.loads(result.read_text())
                         sid = result.parent.name
                         base = self.upstream / "datacorpus/vcslam" / sid
-                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint")}
+                        raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint"), "thinking": job.get("thinking", "default"), "json_output": job.get("json_output", "prompt")}
                         run = self.store.import_run(raw, f"SAST {sid} · {job['model']}", "upstream_pipeline")
                         job["run_ids"].append(run["id"])
                     if not job["run_ids"]:

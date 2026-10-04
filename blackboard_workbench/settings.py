@@ -77,7 +77,7 @@ class ModelSettings:
         for provider, definition in CATALOG.items():
             default_model = definition["models"][0]["id"] if definition["models"] else ""
             stored = raw.get("profiles", {}).get(provider, {})
-            self.profiles[provider] = {"model": stored.get("model", default_model), "endpoint": validate_endpoint(provider, stored.get("endpoint", definition["default_endpoint"]))}
+            self.profiles[provider] = {"model": stored.get("model", default_model), "endpoint": validate_endpoint(provider, stored.get("endpoint", definition["default_endpoint"])), "thinking": stored.get("thinking", "default") if provider == "ollama" else "default"}
         self.saved_keys = {k: v for k, v in self._read("credentials.json").items() if k in CATALOG and isinstance(v, str) and v}
         self.session_keys = {}
 
@@ -126,6 +126,9 @@ class ModelSettings:
                 raise ValueError("Choose a listed model provider.")
             model = required_text(payload.get("model"), "Model ID", 100)
             endpoint = validate_endpoint(provider, payload.get("endpoint"))
+            thinking = payload.get("thinking", self.profiles[provider].get("thinking", "default"))
+            if thinking not in {"default", "off"} or (provider != "ollama" and thinking != "default"):
+                raise ValueError("Thinking must be model default, or off for Ollama.")
             key = payload.get("api_key", "")
             if not isinstance(key, str) or len(key) > 8192 or any(c.isspace() for c in key.strip()):
                 raise ValueError("Enter a valid API key without spaces.")
@@ -148,7 +151,7 @@ class ModelSettings:
                     self.saved_keys.pop(provider, None)
                 if entered:
                     self._write("credentials.json", self.saved_keys)
-            self.profiles[provider] = {"model": model, "endpoint": endpoint}
+            self.profiles[provider] = {"model": model, "endpoint": endpoint, "thinking": thinking}
             self.provider = provider
             self._write("model-settings.json", {"provider": self.provider, "profiles": self.profiles})
             return self.public()
@@ -163,7 +166,7 @@ class ModelSettings:
             chosen = required_text(model if model is not None else profile["model"], "Model ID", 100)
             if CATALOG[provider]["requires_key"] and not key:
                 raise ValueError("Add this provider's API key in Model settings before starting a model job.")
-            return {"provider": provider, "model": chosen, "endpoint": profile["endpoint"], "api_key": key}
+            return {"provider": provider, "model": chosen, "endpoint": profile["endpoint"], "thinking": profile.get("thinking", "default"), "api_key": key}
 
     def redacted(self, text, extra_keys=()):
         with self.lock:

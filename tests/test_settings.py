@@ -85,6 +85,16 @@ class ModelSettingsTests(unittest.TestCase):
                 validate_endpoint("local", url)
         self.assertEqual("http://192.168.1.5:8000/v1", validate_endpoint("local", "http://192.168.1.5:8000/v1/"))
 
+    def test_ollama_thinking_preference_persists_and_rejects_invalid_provider(self):
+        payload = {"provider": "ollama", "model": "local-model", "thinking": "off"}
+        self.settings.save(payload)
+        reopened = ModelSettings(self.root, environ={})
+        self.assertEqual("off", reopened.resolve()["thinking"])
+        self.assertEqual("off", reopened.public()["thinking"])
+        for bad in ({**payload, "thinking": "invented"}, {**payload, "provider": "openai"}):
+            with self.assertRaises(ValueError):
+                self.settings.save(bad)
+
     def test_short_model_test_requires_json_and_never_returns_key(self):
         self.save()
         response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
@@ -135,11 +145,25 @@ class JobCredentialTests(unittest.TestCase):
         self.assertNotIn(secret, self.jobs._log(log, (private_arg["api_key"],)))
 
 
-    def test_cancelled_worker_exit_is_not_recorded_as_failure(self):
+    def test_long_local_job_limit_and_cloud_limit_remain_bounded(self):
         self.settings.save({"provider": "ollama", "model": "local-model"})
+        with patch("blackboard_workbench.jobs.threading.Thread"):
+            job = self.jobs.start({"kind": "pipeline", "samples": ["0044"], "timeout": 7200})
+        self.assertEqual(7200, job["timeout"])
+        self.assertEqual("object-or-array-v1", job["json_output"])
+        with self.assertRaisesRegex(ValueError, "7200"):
+            self.jobs.start({"kind": "pipeline", "samples": ["0044"], "timeout": 7201})
+        self.settings.save({"provider": "openai", "model": "test-model", "api_key": "test-key"})
+        with self.assertRaisesRegex(ValueError, "1800"):
+            self.jobs.start({"kind": "pipeline", "samples": ["0044"], "timeout": 1801})
+
+    def test_cancelled_worker_exit_is_not_recorded_as_failure(self):
+        self.settings.save({"provider": "ollama", "model": "local-model", "thinking": "off"})
         with patch("blackboard_workbench.jobs.threading.Thread") as thread:
             job = self.jobs.start({"kind": "pipeline", "samples": ["0044"]})
         args = thread.call_args.kwargs["args"]
+        self.assertEqual("off", args[1]["llm"]["thinking"])
+        self.assertEqual("off", job["thinking"])
         self.jobs.cancelled.add(job["id"])
         process = Mock(returncode=-15)
         process.poll.return_value = -15

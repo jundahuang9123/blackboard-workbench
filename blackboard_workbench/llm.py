@@ -3,6 +3,7 @@
 Credentials stay in the SDK client in memory. Upstream code receives a compatible
 client, while requests use the provider profile selected by the workbench.
 """
+import json
 from itertools import islice
 from types import SimpleNamespace
 
@@ -16,6 +17,13 @@ DEFAULT_ENDPOINTS = {
     "local": "http://host.docker.internal:1234/v1",
 }
 _LOCAL_PROVIDERS = {"ollama", "local"}
+JSON_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {"name": "blackboard_json", "schema": {
+        "anyOf": [{"type": "object", "additionalProperties": True},
+                  {"type": "array", "items": {}}]
+    }}
+}
 _NATIVE_OPENAI = None
 
 
@@ -67,15 +75,16 @@ def _native_client(config):
     native = _native_class()
     try:
         client = native(api_key=api_key or "workbench-local", base_url=endpoint,
-                        timeout=90, max_retries=0)
+                        timeout=900 if provider in _LOCAL_PROVIDERS else 90, max_retries=0)
     except Exception as exc:
         raise _safe_error(provider, exc) from None
     return provider, client
 
 
 class _Completions:
-    def __init__(self, client, provider, model):
+    def __init__(self, client, provider, model, thinking="default"):
         self._client, self._provider, self._model = client, provider, model
+        self._thinking = thinking
 
     def create(self, *, messages, model=None, **kwargs):
         # The saved provider profile is authoritative even if a future upstream
@@ -90,6 +99,10 @@ class _Completions:
                     raise ValueError("Supply only one output token limit.")
                 kwargs["max_tokens"] = limit
             kwargs.setdefault("max_tokens", 4096)
+        if self._provider == "ollama":
+            kwargs.setdefault("response_format", JSON_RESPONSE_FORMAT)
+        if self._provider == "ollama" and self._thinking == "off":
+            kwargs["reasoning_effort"] = "none"
         try:
             response = self._client.chat.completions.create(
                 model=selected_model, messages=messages, **kwargs)
@@ -107,15 +120,22 @@ class _Completions:
             raise ValueError(f"{self._provider}: the model response was blocked by a content filter.")
         if not isinstance(content, str) or not content.strip():
             raise ValueError(f"{self._provider}: the model returned no response text.")
-        # Preserve the SDK response and usage object. JSON remains the original
-        # pipeline's responsibility; this adapter does not invent or repair it.
+        if self._provider == "ollama":
+            try:
+                parsed = json.loads(content)
+                if not isinstance(parsed, (dict, list)):
+                    raise ValueError("Expected an object or array")
+            except (ValueError, TypeError):
+                raise ValueError("ollama: the model returned invalid structured JSON; the job was stopped.") from None
+        # Preserve the actual response; never repair or invent model output.
+        # Semantic validation remains the upstream pipeline's responsibility.
         return response
 
 
 def make_client(config):
     """Return the minimal chat client used by SAST and workbench review."""
     provider, native = _native_client(config)
-    completions = _Completions(native, provider, config.get("model"))
+    completions = _Completions(native, provider, config.get("model"), config.get("thinking", "default"))
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
 

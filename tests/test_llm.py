@@ -52,20 +52,32 @@ class LLMTests(unittest.TestCase):
                 client = llm.make_client(self.config(provider))
                 client.chat.completions.create(messages=self.messages, model="upstream-default")
                 self.assertEqual(llm.DEFAULT_ENDPOINTS[provider], self.sdk_class.call_args.kwargs["base_url"])
+                format_arg = {"response_format": llm.JSON_RESPONSE_FORMAT} if provider == "ollama" else {}
                 self.native.chat.completions.create.assert_called_once_with(
-                    model="selected-model", messages=self.messages, max_tokens=4096)
+                    model="selected-model", messages=self.messages, max_tokens=4096, **format_arg)
                 self.native.chat.completions.create.reset_mock()
                 client.chat.completions.create(messages=self.messages, max_completion_tokens=1500)
                 self.native.chat.completions.create.assert_called_once_with(
-                    model="selected-model", messages=self.messages, max_tokens=1500)
+                    model="selected-model", messages=self.messages, max_tokens=1500, **format_arg)
 
     def test_custom_local_endpoint_and_optional_credential(self):
         client = llm.make_client(self.config("local", endpoint="http://local-model:9000/v1", api_key=""))
         client.chat.completions.create(messages=self.messages)
         self.assertEqual("http://local-model:9000/v1", self.sdk_class.call_args.kwargs["base_url"])
         self.assertEqual("workbench-local", self.sdk_class.call_args.kwargs["api_key"])
+        self.assertEqual(900, self.sdk_class.call_args.kwargs["timeout"])
         with self.assertRaisesRegex(ValueError, "Configure the anthropic API key"):
             llm.make_client(self.config("anthropic", api_key=""))
+
+    def test_ollama_thinking_off_is_explicit_and_does_not_affect_other_providers(self):
+        for provider in ("ollama", "openai", "local"):
+            self.native.chat.completions.create.reset_mock()
+            llm.make_client(self.config(provider, thinking="off")).chat.completions.create(messages=self.messages)
+            request = self.native.chat.completions.create.call_args.kwargs
+            if provider == "ollama":
+                self.assertEqual("none", request["reasoning_effort"])
+            else:
+                self.assertNotIn("reasoning_effort", request)
 
     def test_empty_response_is_rejected_and_json_is_not_repaired(self):
         for response in (types.SimpleNamespace(choices=[]),
@@ -78,6 +90,16 @@ class LLMTests(unittest.TestCase):
         self.native.chat.completions.create.return_value = self.response
         result = llm.make_client(self.config()).chat.completions.create(messages=self.messages)
         self.assertEqual("```json\n{}\n```", result.choices[0].message.content)
+
+    def test_ollama_requires_parseable_object_or_array_without_repair(self):
+        client = llm.make_client(self.config("ollama"))
+        for content in ('[{"accepted": true}]', '{"ok": true}'):
+            self.response.choices[0].message.content = content
+            self.assertIs(self.response, client.chat.completions.create(messages=self.messages))
+        for content in ("[{'accepted': True}]", '"a string"', '```json\n{}\n```'):
+            self.response.choices[0].message.content = content
+            with self.assertRaisesRegex(ValueError, "invalid structured JSON"):
+                client.chat.completions.create(messages=self.messages)
 
     def test_truncated_and_filtered_responses_cannot_be_accepted_as_complete(self):
         for reason, message in (("length", "truncated at its output limit"),
