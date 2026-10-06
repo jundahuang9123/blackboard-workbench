@@ -69,7 +69,7 @@ A “validated candidate” passed Sebastian's candidate validation step; it is 
 
 ## Adopt a later Sebastian revision
 
-The default `SAST_REF` in [`compose.yaml`](compose.yaml) and [`.env.example`](.env.example) pins [Sebastian's repository](https://github.com/U0iS112/654321) to commit `074ddfc409bdd120c93a0b68773bafa464e56504`. This makes each image's pipeline version explicit. When Sebastian publishes an optimization, set `SAST_REF` in your local `.env` to the reviewed commit SHA, then rebuild and restart:
+The default `SAST_REF` in [`compose.yaml`](compose.yaml) and [`.env.example`](.env.example) pins [Sebastian's repository](https://github.com/U0iS112/654321) to commit `153b6ca0ff947f05d860addc55e227ab60662a89`. This makes each image's pipeline version explicit. When Sebastian publishes an optimization, set `SAST_REF` in your local `.env` to the reviewed commit SHA, then rebuild and restart:
 
 ~~~sh
 docker compose up --build -d
@@ -78,3 +78,10 @@ docker compose up --build -d
 The Docker build checks out that commit. It installs the pipeline packages listed in [`requirements-upstream-runtime.txt`](requirements-upstream-runtime.txt), which match the imports used at the default pinned revision. When adopting a later commit, review its `requirements.txt` and imports and update this list if needed. New code becomes available to the workbench without copying it here, provided its `run_pipeline` call and `*_mapping_results.json` output remain compatible. Check **Execution history** for the upstream revision used by a run, then verify an example pipeline result and its candidate/council views after updating. If Sebastian changes those interfaces, update the workbench adapter and worker for the new contract.
 
 The UI stores the original output and review events separately. It does not claim to improve mapping accuracy by itself. A different provider/model and the adapter's output-token bounds are separate execution conditions, not evidence of equivalent accuracy. Provider routing and the UI have offline checks. The complete local `0044` pipeline run with Ollama 0.35.1 and `blackboard-qwen27b:latest` completed, but its built-in evaluation was 0/4 exact matches. Cloud inference and other local models remain unverified; do not treat a short connection test as evidence of mapping quality. See [architecture and data boundaries](docs/ARCHITECTURE.md).
+
+
+### Shared ontology context proposal
+
+The default Docker dependency is the reviewed development branch described in [Architecture](docs/ARCHITECTURE.md#proposed-shared-ontology-dependency), pinned to a full commit SHA. It is pending overnight validation and has not been submitted as an upstream pull request. In **Run Sebastian's pipeline** or **Run your own data**, select **Shared context** to reuse a stable ontology prefix, or **Legacy** for the original prompt layout. Execution history records the choice. Custom uploads still accept one to five Turtle ontologies and an optional reference file; without a reference, benchmarking remains disabled.
+
+To change the source after an upstream optimization is reviewed, set `SAST_REPO` and `SAST_REF` when building Compose. Keep the source URL and reviewed full commit together; an older upstream commit without the `context_mode` API requires the older workbench worker as well. Updating the pin alone does not establish benchmark equivalence.

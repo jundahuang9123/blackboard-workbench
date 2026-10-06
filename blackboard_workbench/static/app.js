@@ -194,7 +194,7 @@ $('#import').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)
 $('#refresh').onclick=()=>action(async()=>{await loadRuns();if(state.run)await openRun(state.run.id);await loadJobs();notice('Saved records refreshed.');});
 $('#search').oninput=renderQueue;$('#status-filter').onchange=renderQueue;
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
-$('#run-form').onsubmit=e=>{e.preventDefault();action(async()=>{const values=Object.fromEntries(new FormData(e.target));const ids=x=>x.split(/[\s,]+/).filter(Boolean);await api('/api/jobs',{kind:'pipeline',samples:ids(values.samples),historical:ids(values.historical),timeout:Number(values.timeout)});await loadJobs();notice('SAST run started. You can continue reviewing saved runs.');});};
+$('#run-form').onsubmit=e=>{e.preventDefault();action(async()=>{const values=Object.fromEntries(new FormData(e.target));const ids=x=>x.split(/[\s,]+/).filter(Boolean);await api('/api/jobs',{kind:'pipeline',samples:ids(values.samples),historical:ids(values.historical),timeout:Number(values.timeout),context_mode:values.context_mode});await loadJobs();notice('SAST run started. You can continue reviewing saved runs.');});};
 async function loadJobs() {
   const openLogs=new Set([...$('#jobs').querySelectorAll('details[open]')].map(d=>d.dataset.jobLog));
   const logScroll=new Map([...$('#jobs').querySelectorAll('details[open] pre')].map(p=>[p.closest('details').dataset.jobLog,p.scrollTop]));
@@ -202,7 +202,7 @@ async function loadJobs() {
   const completed=jobs.filter(j=>j.status==='completed'&&state.jobs.some(old=>old.id===j.id&&old.status!=='completed'));
   state.jobs=jobs;
   $('#jobs-section').hidden=!jobs.length;
-  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':j.kind==='custom_pipeline'?'Custom data pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.thinking==='off'?' · thinking off':''}${j.rounds?' · '+j.rounds+' rounds':''}</p><p>${esc(j.message)}${j.dataset_title?' · '+esc(j.dataset_title):''}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
+  $('#jobs').innerHTML=jobs.map(j=>`<article class="job"><h3>${esc(j.kind==='pipeline'?'SAST pipeline':j.kind==='custom_pipeline'?'Custom data pipeline':'Bounded agent review')} ${badge(j.status)}</h3><p class="hint">${esc(date(j.created))} · ${j.provider?esc(providerLabel(j.provider))+' · ':''}${esc(j.model)}${j.thinking==='off'?' · thinking off':''}${j.rounds?' · '+j.rounds+' rounds':''}${j.context_mode?' · '+esc(j.context_mode)+' ontology context':''}</p><p>${esc(j.message)}${j.dataset_title?' · '+esc(j.dataset_title):''}</p>${j.run_ids.map(id=>`<button data-job-run="${id}">Open saved run</button>`).join('')}${j.kind==='discussion'&&j.status==='completed'?`<button data-job-run="${j.run_id}">Refresh run to view responses</button>`:''}${['running','queued'].includes(j.status)?`<button data-cancel="${j.id}">Cancel job</button>`:''}<details data-job-log="${esc(j.id)}" ${openLogs.has(j.id)?'open':''}><summary>Worker log & execution metadata</summary><pre>${esc(j.log||'No log yet.')}</pre><p class="hint">Upstream revision: ${esc(j.upstream_revision)} · Time limit: ${j.timeout}s · Job ${j.id}</p></details></article>`).join('');
   $('#jobs').querySelectorAll('details[open] pre').forEach(p=>{p.scrollTop=logScroll.get(p.closest('details').dataset.jobLog)||0;});
   document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>action(async()=>{await api(`/api/jobs/${b.dataset.cancel}/cancel`,{});notice('Cancellation requested.');await loadJobs();}));
   document.querySelectorAll('[data-job-run]').forEach(b=>b.onclick=()=>action(async()=>{await loadRuns();await openRun(b.dataset.jobRun);$('#workspace').scrollIntoView({behavior:'smooth'});}));
@@ -273,7 +273,7 @@ $('#custom-form').onsubmit=e=>{e.preventDefault();action(async()=>{
 $('#custom-start').onclick=()=>action(async()=>{
   const timeout=Number($('#custom-timeout').value);
   if(!Number.isInteger(timeout)||timeout<30||timeout>Number($('#custom-timeout').max))throw new Error('Choose a time limit within the displayed range.');
-  await api('/api/jobs',{kind:'custom_pipeline',dataset_id:state.dataset,timeout});await loadJobs();
+  await api('/api/jobs',{kind:'custom_pipeline',dataset_id:state.dataset,timeout,context_mode:$('#custom-context-mode').value});await loadJobs();
   notice('Custom data run started. Follow execution history.');$('#jobs-section').scrollIntoView({behavior:'smooth'});
 });
 function renderBenchmark() {

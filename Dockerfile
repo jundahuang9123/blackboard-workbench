@@ -1,8 +1,8 @@
 # Keep the semantic-typing implementation external and versioned.
 FROM python:3.11-slim
 
-ARG SAST_REPO=https://github.com/U0iS112/654321.git
-ARG SAST_REF=074ddfc409bdd120c93a0b68773bafa464e56504
+ARG SAST_REPO=https://github.com/jundahuang9123/profile-requirements-extraction.git
+ARG SAST_REF=153b6ca0ff947f05d860addc55e227ab60662a89
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

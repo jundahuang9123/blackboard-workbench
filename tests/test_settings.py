@@ -128,6 +128,27 @@ class JobCredentialTests(unittest.TestCase):
         self.assertEqual([], self.store.jobs())
         self.assertIsNone(self.jobs.active)
 
+    def test_context_mode_is_snapshotted_and_defaults_to_shared(self):
+        self.settings.save({"provider": "ollama", "model": "local-model"})
+        for mode in (None, "legacy"):
+            self.jobs.active = None
+            payload = {"kind": "pipeline", "samples": ["0044"]}
+            if mode:
+                payload["context_mode"] = mode
+            with patch("blackboard_workbench.jobs.threading.Thread") as thread:
+                job = self.jobs.start(payload)
+            _, cfg, _ = thread.call_args.kwargs["args"]
+            self.assertEqual(mode or "shared", cfg["context_mode"])
+            self.assertEqual(mode or "shared", job["context_mode"])
+
+    def test_unknown_context_mode_is_rejected_before_job_start(self):
+        self.settings.save({"provider": "ollama", "model": "local-model"})
+        with patch("blackboard_workbench.jobs.threading.Thread") as thread:
+            with self.assertRaisesRegex(ValueError, "ontology context"):
+                self.jobs.start({"kind": "pipeline", "samples": ["0044"], "context_mode": "unknown"})
+            thread.assert_not_called()
+        self.assertEqual([], self.store.jobs())
+
     def test_job_config_and_history_exclude_key_and_snapshot_separate_credential(self):
         secret = "snapshot-private-key"
         self.settings.save({"provider": "anthropic", "model": "claude-model", "api_key": secret})

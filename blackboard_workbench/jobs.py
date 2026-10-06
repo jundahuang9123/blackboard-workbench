@@ -51,6 +51,11 @@ class Jobs:
         if not isinstance(timeout, int) or isinstance(timeout, bool) or not 30 <= timeout <= max_timeout:
             raise ValueError(f"Time limit must be between 30 and {max_timeout} seconds.")
         job = {"id": uuid.uuid4().hex, "created": now(), "status": "queued", "kind": kind, "model": model, "provider": connection["provider"], "endpoint": connection["endpoint"], "thinking": connection.get("thinking", "default"), "timeout": timeout, "run_ids": [], "message": "Waiting for worker", "log": ""}
+        if kind in {"pipeline", "custom_pipeline"}:
+            context_mode = payload.get("context_mode", "shared")
+            if context_mode not in {"legacy", "shared"}:
+                raise ValueError("Choose shared or legacy ontology context.")
+            job["context_mode"] = context_mode
         job["json_output"] = "object-or-array-v1" if connection["provider"] == "ollama" else "prompt"
         cfg = {**job, "upstream": str(self.upstream), "llm": {k: connection[k] for k in ("provider", "model", "endpoint", "thinking")}}
         if kind == "pipeline":
@@ -163,7 +168,7 @@ class Jobs:
                         else:
                             sid = result.parent.name
                             base = self.upstream / "datacorpus/vcslam" / sid
-                            raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint"), "thinking": job.get("thinking", "default"), "json_output": job.get("json_output", "prompt")}
+                            raw["workbench_context"] = {"data": json.loads((base / f"{sid}_samples.json").read_text()), "documentation": (base / f"{sid}.txt").read_text() if (base / f"{sid}.txt").exists() else "", "historical_ids": cfg["historical"], "upstream_revision": job["upstream_revision"], "model": job["model"], "provider": job.get("provider", "openai"), "endpoint": job.get("endpoint"), "thinking": job.get("thinking", "default"), "json_output": job.get("json_output", "prompt"), "context_mode": job.get("context_mode", "shared")}
                             title, origin = f"SAST {sid} · {job['model']}", "upstream_pipeline"
                         run = self.store.import_run(raw, title, origin)
                         job["run_ids"].append(run["id"])

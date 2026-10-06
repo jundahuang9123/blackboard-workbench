@@ -100,7 +100,7 @@ def run_custom_pipeline(pipeline, cfg):
     pipeline.evaluate_top_k = lambda *, k, reference_model, to_evaluate: evaluate_reference(reference, graph, to_evaluate)
     print(f'Custom dataset: {metadata["title"]} · {len(metadata["columns"])} columns · {len(data)} example rows', flush=True)
     print('Reference benchmark enabled.' if reference is not None else 'No reference mappings supplied. Benchmark disabled.', flush=True)
-    pipeline.run_pipeline(str(input_dir), ['0000'], [], cfg['output'], False)
+    pipeline.run_pipeline(str(input_dir), ['0000'], [], cfg['output'], False, context_mode=cfg.get('context_mode', 'shared'))
     for result in Path(cfg['output']).glob('*/*/*_mapping_results.json'):
         raw = json.loads(result.read_text())
         if reference is None:
@@ -108,6 +108,6 @@ def run_custom_pipeline(pipeline, cfg):
         raw['benchmark'] = {'available': reference is not None, 'reference_columns': list(reference) if reference else [],
                             'reason': 'Exact class/property matching over supplied reference columns.' if reference else 'No reference mappings supplied.'}
         raw['workbench_context'] = {'data': data, 'documentation': documentation, 'historical_ids': [],
-                                    'dataset': metadata, 'upstream_revision': cfg.get('upstream_revision'),
+                                    'dataset': metadata, 'upstream_revision': cfg.get('upstream_revision'), 'context_mode': cfg.get('context_mode', 'shared'),
                                     **cfg['llm'], 'json_output': cfg.get('json_output')}
         result.write_text(json.dumps(raw, indent=2, ensure_ascii=False))

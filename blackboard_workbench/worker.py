@@ -23,12 +23,12 @@ def main():
         install_upstream_client(connection)
         from blackboard.codebase.core import blackboard_semantic_mapping as pipeline
         pipeline.gptmodel = cfg["model"]
-        # Delegate the original algorithm; provider/model are recorded as a run condition.
+        # Delegate the external pipeline; provider, model and context mode are execution conditions.
         if cfg["kind"] == "custom_pipeline":
             from blackboard_workbench.custom_pipeline import run_custom_pipeline
             run_custom_pipeline(pipeline, cfg)
         else:
-            pipeline.run_pipeline(str(source / "datacorpus" / "vcslam"), cfg["samples"], cfg["historical"], cfg["output"], False)
+            pipeline.run_pipeline(str(source / "datacorpus" / "vcslam"), cfg["samples"], cfg["historical"], cfg["output"], False, context_mode=cfg.get("context_mode", "shared"))
     else:
         client = make_client(connection)
         context = cfg["context"]
