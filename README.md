@@ -69,7 +69,7 @@ A “validated candidate” passed Sebastian's candidate validation step; it is 
 
 ## Adopt a later Sebastian revision
 
-The default `SAST_REF` in [`compose.yaml`](compose.yaml) and [`.env.example`](.env.example) pins [Sebastian's repository](https://github.com/U0iS112/654321) to commit `153b6ca0ff947f05d860addc55e227ab60662a89`. This makes each image's pipeline version explicit. When Sebastian publishes an optimization, set `SAST_REF` in your local `.env` to the reviewed commit SHA, then rebuild and restart:
+The default `SAST_REF` in [`compose.yaml`](compose.yaml) and [`.env.example`](.env.example) pins the [development fork of Sebastian's repository](https://github.com/jundahuang9123/profile-requirements-extraction/tree/shared-ontology-context) to commit `9f637920e9cf8e1ceaa63556105959a46d4d0ebc`. This makes each image's pipeline version explicit. When Sebastian publishes an optimization, set `SAST_REPO` and `SAST_REF` in your local `.env` to its repository and reviewed commit SHA, then rebuild and restart:
 
 ~~~sh
 docker compose up --build -d
@@ -82,6 +82,8 @@ The UI stores the original output and review events separately. It does not clai
 
 ### Shared ontology context proposal
 
-The default Docker dependency is the reviewed development branch described in [Architecture](docs/ARCHITECTURE.md#proposed-shared-ontology-dependency), pinned to a full commit SHA. It is pending overnight validation and has not been submitted as an upstream pull request. In **Run Sebastian's pipeline** or **Run your own data**, select **Shared context** to reuse a stable ontology prefix, or **Legacy** for the original prompt layout. Execution history records the choice. Custom uploads still accept one to five Turtle ontologies and an optional reference file; without a reference, benchmarking remains disabled.
+The default Docker dependency is the development branch described in [Architecture](docs/ARCHITECTURE.md#proposed-shared-ontology-dependency), pinned to a full commit SHA. It has not been submitted as an upstream pull request. In **Run Sebastian's pipeline** or **Run your own data**, select **Shared context** to place a stable ontology prefix on generation and documentation requests, or **Legacy** for the original prompt layout. Signals, selection and councils keep their compact inputs. Server-side reuse is not guaranteed. Execution history records the choice. Custom uploads still accept one to five Turtle ontologies and an optional reference file; without a reference, benchmarking remains disabled.
+
+The first shared-context run added expensive full-ontology inputs to compact signals and was slower on local Qwen. The current pin corrects that regression while preserving the same model configuration and agent workflow. Offline routing and pipeline tests pass; the corrected layout has not yet had a live timing comparison. See the [upstream correction and limitations](https://github.com/jundahuang9123/profile-requirements-extraction/blob/9f637920e9cf8e1ceaa63556105959a46d4d0ebc/docs/SHARED_ONTOLOGY_CONTEXT.md#controlled-correction-for-local-qwen).
 
 To change the source after an upstream optimization is reviewed, set `SAST_REPO` and `SAST_REF` when building Compose. Keep the source URL and reviewed full commit together; an older upstream commit without the `context_mode` API requires the older workbench worker as well. Updating the pin alone does not establish benchmark equivalence.

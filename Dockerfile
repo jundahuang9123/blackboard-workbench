@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 
 ARG SAST_REPO=https://github.com/jundahuang9123/profile-requirements-extraction.git
-ARG SAST_REF=153b6ca0ff947f05d860addc55e227ab60662a89
+ARG SAST_REF=9f637920e9cf8e1ceaa63556105959a46d4d0ebc
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

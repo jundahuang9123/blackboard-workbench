@@ -1,6 +1,6 @@
 # Sebastian's original workflow in the workbench
 
-This guide follows Sebastian's [SAST-Blackboard](https://github.com/U0iS112/654321) stage sequence and the compatible [`run_pipeline` entry point in the pinned shared-context proposal](https://github.com/jundahuang9123/profile-requirements-extraction/blob/153b6ca0ff947f05d860addc55e227ab60662a89/blackboard/codebase/core/blackboard_semantic_mapping.py). The workbench invokes that function and displays its saved result. Generation, signal assessments, selection and the original council keep their stage sequence; **Shared context** changes the per-column prompt layout, while **Legacy** retains the original layout. The contribution remains pending runtime validation and upstream review.
+This guide follows Sebastian's [SAST-Blackboard](https://github.com/U0iS112/654321) stage sequence and the compatible [`run_pipeline` entry point in the pinned shared-context proposal](https://github.com/jundahuang9123/profile-requirements-extraction/blob/9f637920e9cf8e1ceaa63556105959a46d4d0ebc/blackboard/codebase/core/blackboard_semantic_mapping.py). The workbench invokes that function and displays its saved result. Generation, signal assessments, selection and the original council keep their stage sequence; **Shared context** places the ontology first in generation and documentation requests while retaining compact signal, selection and council inputs. **Legacy** retains the original layout. The corrected contribution remains pending live timing validation and upstream review.
 
 ## Input to output
 
